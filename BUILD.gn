@@ -1,6 +1,7 @@
 import("//third_party/v8/gni/v8.gni")
 import("//third_party/v8/snapshot_toolchain.gni")
 import("//build_extra/flatbuffers/flatbuffer.gni")
+import("//build_extra/flatbuffers/rust/rust_flatbuffer.gni")
 import("//build_extra/deno.gni")
 import("//build_extra/rust/rust.gni")
 
@@ -64,6 +65,8 @@ rust_staticlib("handlers") {
     "$rust_build:libc",
     "$rust_build:url",
     "$rust_build:log",
+    ":msg_rs",
+    "//build_extra/flatbuffers/rust:flatbuffers",
   ]
 }
 
@@ -291,6 +294,12 @@ action("flatbufferjs") {
 }
 
 ts_flatbuffer("msg_ts") {
+  sources = [
+    "src/msg.fbs",
+  ]
+}
+
+rust_flatbuffer("msg_rs") {
   sources = [
     "src/msg.fbs",
   ]

@@ -18,10 +18,11 @@ function assignCmdId(): number {
 
 function startMsg(cmdId: number): Uint8Array {
   const builder = new flatbuffers.Builder();
-  const msg = fbs.Start.createStart(builder, 0);
+  fbs.Start.startStart(builder);
+  const start_off = fbs.Start.endStart(builder);
   fbs.Base.startBase(builder);
   fbs.Base.addCmdId(builder, cmdId);
-  fbs.Base.addMsg(builder, msg);
+  fbs.Base.addMsg(builder, start_off);
   fbs.Base.addMsgType(builder, fbs.Any.Start);
   builder.finish(fbs.Base.endBase(builder));
   return builder.asUint8Array();

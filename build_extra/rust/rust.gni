@@ -155,6 +155,7 @@ template("rust_component") {
                              "source_root",
                              "is_test",
                              "testonly",
+                             "deps",
                            ])
     if (!defined(invoker.crate_type)) {
       crate_type = "rlib"
