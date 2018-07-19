@@ -2,6 +2,30 @@
 # Copyright 2018 Bert Belder <bertbelder@gmail.com>
 # All rights reserved. MIT License.
 
+# The Rust compiler normally builds source code directly into an executable.
+# Internally, object code is produced, and then the (system) linker is called,
+# but this all happens under the covers.
+#
+# However Deno's build system uses it's own linker. For it to successfully
+# produce an executable from rustc-generated object code, it needs to link
+# with a dozen or so "built-in" Rust libraries (as in: not Cargo crates),
+# and we need to tell the linker which and where those .rlibs are.
+#
+# Hard-coding these libraries into the GN configuration isn't possible: the
+# required .rlib files have some sort of hash code in their file name, and their
+# location depends on how Rust is set up, and which toolchain is active.
+#
+# So instead, we have this script: it writes a list of linker options (ldflags)
+# to stdout, separated by newline characters. It is called from `rust.gni` when
+# GN is generating ninja files (it doesn't run in the build phase).
+#
+# There is no official way through which rustc will give us the information
+# we need, so a "back door" is used. We tell `rustc` to compile a (dummy)
+# program, and to use a custom linker. This "linker" doesn't actually link
+# anything; it just dumps it's argv to a temporary file. When rustc is done,
+# this script then reads the linker arguments from that temporary file, and
+# then filters it to remove flags that are irrelevant or undesirable.
+
 import sys
 import os
 from os import path
@@ -15,8 +39,10 @@ def capture_args(argsfile_path):
 
 
 def main():
-    # If ARGSFILE_PATH is set, we're recursively being invoked by ourselves
-    # through rustc; write program arguments to the specified file and exit.
+    # If ARGSFILE_PATH is set this script is being invoked by rustc, which
+    # thinks we are a linker. All we do now is write our argv to the specified
+    # file and exit. Further processing is done by our grandparent process,
+    # also this script but invoked by gn.
     argsfile_path = os.getenv("ARGSFILE_PATH")
     if argsfile_path is not None:
         return capture_args(argsfile_path)
@@ -24,9 +50,19 @@ def main():
     # Prepare the environment for rustc.
     rustc_env = os.environ.copy()
 
-    # Make sure that when rustc invokes this script it uses the same version
-    # of the python interpreter as we're currently using. On Posix systems this
-    # is done making the python binary directory the first element in PATH.
+    # We'll capture the arguments rustc passes to the linker by telling it
+    # that this script *is* the linker.
+    # On Posix systems, this file is directly executable thanks to it's shebang.
+    # On Windows, we use a .cmd wrapper file.
+    if os.name == "nt":
+        rustc_linker_base, rustc_linker_ext = path.splitext(__file__)
+        rustc_linker = rustc_linker_base + ".cmd"
+    else:
+        rustc_linker = __file__
+
+    # Make sure that when rustc invokes this script, it uses the same version
+    # of the Python interpreter as we're currently using. On Posix systems this
+    # is done making the Python directory the first element of PATH.
     # On Windows, the wrapper script uses the PYTHON_EXE environment variable.
     if os.name == "nt":
         rustc_env["PYTHON_EXE"] = sys.executable
@@ -34,22 +70,14 @@ def main():
         python_dir = path.dirname(sys.executable)
         rustc_env["PATH"] = python_dir + path.pathsep + os.environ["PATH"]
 
-    # On posix systems, this file itself is executable courtesy of it's shebang
-    # line. On Windows, use a .cmd wrapper file.
-    if os.name == "nt":
-        rustc_linker_base, rustc_linker_ext = path.splitext(__file__)
-        rustc_linker = rustc_linker_base + ".cmd"
-    else:
-        rustc_linker = __file__
-
-    # Create a temporary file to write captured rust linker arguments to.
+    # Create a temporary file to write captured Rust linker arguments to.
     # Unfortunately we can't use tempfile.NamedTemporaryFile here, because the
     # file it creates can't be open in two processes at the same time.
     argsfile_fd, argsfile_path = tempfile.mkstemp()
     rustc_env["ARGSFILE_PATH"] = argsfile_path
 
     try:
-        # Spawn rustc and make it use this very script as its "linker".
+        # Spawn rustc, and make it use this very script as its "linker".
         rustc_args = ["-Clinker=" + rustc_linker, "-Csave-temps"
                       ] + sys.argv[1:]
         subprocess.check_call(["rustc"] + rustc_args, env=rustc_env)
@@ -64,14 +92,14 @@ def main():
         os.close(argsfile_fd)
         os.unlink(argsfile_path)
 
-    # From the list of captured linker arguments, build a list of ldflags that
+    # From the list of captured linker arguments, build the list of ldflags that
     # we actually need.
     ldflags = []
     next_arg_is_flag_value = False
     for arg in args:
-        # Note that within the following if/elif blocks, `pass` means `arg`
-        # gets included in `ldflags`. The final `else` clause filters out
-        # unrecognized/unwanted flags.
+        # Note that within the following if/elif blocks, `pass` means that
+        # that captured arguments gets included in `ldflags`. The final `else`
+        # clause filters out unrecognized/unwanted flags.
         if next_arg_is_flag_value:
             # We're looking at a value that follows certain parametric flags,
             # e.g. the path in '-L <path>'.
@@ -88,8 +116,12 @@ def main():
             pass
         elif arg.endswith(".lib") and not arg.startswith("msvcrt"):
             # Include most Windows static/import libraries (e.g. `ws2_32.lib`).
-            # However we exclude Rusts choice of C runtime (mvcrt*.lib), since
-            # it makes poor choices.
+            # However we ignore Rusts choice of C runtime (`mvcrt*.lib`).
+            # Rust insists on always using the release "flavor", even in debug
+            # mode, which causes conflicts with other libraries we link with.
+            pass
+        elif arg.upper().startswith("/LIBPATH:"):
+            # `/LIBPATH:<path>`: Linker search path (Microsoft style).
             pass
         elif arg == "-l" or arg == "-L":
             # `-l <name>`: Link with library (GCC style).
@@ -98,11 +130,8 @@ def main():
         elif arg == "-Wl,--start-group" or arg == "-Wl,--end-group":
             # Start or end of an archive group (GCC style).
             pass
-        elif arg.upper().startswith("/LIBPATH:"):
-            # `/LIBPATH:<path>`: Linker search path (Microsoft style).
-            pass
         else:
-            # No matches -- don't add this flag to ldflags.
+            # Not a flag we're interested in -- don't add it to ldflags.
             continue
 
         ldflags += [arg]

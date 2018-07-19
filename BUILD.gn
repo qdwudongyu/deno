@@ -20,6 +20,10 @@ config("deno_config") {
   if (is_debug) {
     defines = [ "DEBUG" ]
   }
+
+  # Targets built with the `rust_executable()` template automatically pick up
+  # these dependencies, but those built with `executable()` need them when they
+  # have Rust inputs. Currently, there's only one such target, `test_cc`.
   if (is_mac) {
     libs = [ "resolv" ]
   }

@@ -1,13 +1,3 @@
-empty_rs_path = rebase_path("empty.rs", root_build_dir)
-rust_bin_ldflags =
-    exec_script("get_rust_ldflags.py", [ empty_rs_path ], "list lines")
-rust_test_ldflags = exec_script("get_rust_ldflags.py",
-                                [
-                                  empty_rs_path,
-                                  "--test",
-                                ],
-                                "list lines")
-
 declare_args() {
   # Absolute path of rust build files.
   rust_build = "//build_extra/rust/"
@@ -18,6 +8,32 @@ if (is_win) {
 } else {
   executable_suffix = ""
 }
+
+# The official way of building Rust executables is to to let rustc do the
+# linking. However, we'd prefer to leave it in the hands of gn/ninja:
+#   * It allows us to use source sets.
+#   * It allows us to use the bundled lld that Chromium and V8 use.
+#   * We have more control over build flags.
+#   * To sidestep rustc weirdness (e.g. on Windows, it always links with the
+#     release C runtime library, even for debug builds).
+#
+# The `get_rust_ldflags` tool outputs the linker flags that are needed to
+# successfully link rustc object code into an executable.
+# We generate two sets of ldflags:
+#   `rust_bin_ldflags`:  Used for rust_executable targets.
+#   `rust_test_ldflags`: Used for rust_test targets; includes the test harness.
+#
+# The tool works by compiling and linking something with rustc, and analyzing
+# the arguments it passes to the system linker. That's what dummy.rs is for.
+dummy_rs_path = rebase_path("dummy.rs", root_build_dir)
+rust_bin_ldflags =
+    exec_script("get_rust_ldflags.py", [ dummy_rs_path ], "list lines")
+rust_test_ldflags = exec_script("get_rust_ldflags.py",
+                                [
+                                  dummy_rs_path,
+                                  "--test",
+                                ],
+                                "list lines")
 
 template("run_rustc") {
   action(target_name) {
@@ -69,7 +85,6 @@ template("run_rustc") {
     output_file_rel = rebase_path(output_file, root_build_dir)
     args += [ "--emit=$emit_type=$output_file_rel" ]
 
-    # TODO(ry) For unknown reasons emitting a depfile on tests doesn't work.
     depfile = "$target_out_dir/$crate_name.d"
     args += [
       "--emit=dep-info=" + rebase_path(depfile, root_build_dir),
