@@ -1,10 +1,6 @@
 // Copyright 2018 Ryan Dahl <ry@tinyclouds.org>
 // All rights reserved. MIT License.
-extern crate libc;
-#[macro_use]
-extern crate log;
 extern crate flatbuffers;
-extern crate msg_rs as msg_generated;
 extern crate url;
 
 use libc::c_char;
@@ -16,7 +12,6 @@ use std::io::Read;
 use std::path::Path;
 use url::Url;
 
-mod binding;
 use binding::{deno_buf, deno_set_response, DenoC};
 
 // TODO(ry) SRC_DIR is just a placeholder for future caching functionality.

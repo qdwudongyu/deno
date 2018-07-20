@@ -1,7 +1,6 @@
 // Copyright 2018 Ryan Dahl <ry@tinyclouds.org>
 // All rights reserved. MIT License.
 #![allow(dead_code)]
-
 extern crate libc;
 use libc::c_char;
 use libc::c_int;
